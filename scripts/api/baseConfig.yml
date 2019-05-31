@@ -1,0 +1,185 @@
+---
+
+- name: ah birdbox frontend
+  hosts: all
+  remote_user: ubuntu
+  become: yes
+  become_method: sudo
+  vars:
+    ansible_python_interpreter: "/usr/bin/python3"
+
+  tasks:
+
+  # INSTALL PACKAGES
+
+  - name: Adding python 3.7 repository
+    apt_repository:
+      repo: ppa:deadsnakes/ppa
+      update_cache: yes
+      state: present
+
+  - name: Installing python 3.7
+    apt:
+      name: python3.7
+      update_cache: yes
+      state: present
+  
+  - name: Installing python-virtualenv python3-pip nginx python3.7-gdbm
+    apt:
+      name: [python-virtualenv, python3-pip, nginx, python3.7-gdbm]
+      state: present
+    
+  # CLONE THE REPO
+
+  - name: clone the repo
+    git:
+      repo: 'https://github.com/andela/ah-bird-box.git'
+      dest: /home/ubuntu/ah-bird-box
+      clone: yes
+
+  # CREATE VIRTUAL ENVIROMENT AND INSTALL DEPENDNCIES
+
+  - name: Add a python virtaul enviroment and activate it
+    shell: 
+      cmd: |
+        cd /home/ubuntu/ah-bird-box
+        virtualenv --python=/usr/bin/python3.7 venv
+        source venv/bin/activate
+        pip3 install -r requirements.txt
+
+  # CONFIGURE NGINX
+  
+  - name: Change ownership of various directories
+    file: 
+      path: "{{ item }}"
+      owner: ubuntu
+      recurse: yes
+    with_items:
+      - /etc/nginx/sites-available
+      
+  - name: Remove NGINX default files
+    file: 
+      path: "{{ item }}"
+      state: absent
+    with_items:
+      - /etc/nginx/sites-enabled/default
+      - /etc/nginx/sites-available/default
+
+  - name: Check if custom file already exists and delete if found
+    file: 
+      path: /etc/nginx/sites-available/ansibleDemo
+      state: absent
+
+  - name: Add custom nginx configuration
+    shell:
+      cmd: |
+          cat > /etc/nginx/sites-available/ansibleDemo <<EOF
+          server {
+              listen 80;
+              server_name localhost;
+              location / {
+                proxy_pass http://127.0.0.1:8000;
+              }
+          }
+
+          EOF
+
+  - name: create symlinks for nginx configuration 
+    file:
+      src:  /etc/nginx/sites-available/ansibleDemo
+      dest: /etc/nginx/sites-enabled/ansibleDemo
+      state: link
+    notify:
+    - restart nginx
+
+  # CONFIGURE APP TO RUN
+
+  - name: Create enviroment variables script
+    shell: 
+      cmd: |
+        cd /home/ubuntu/ah-bird-box
+        touch .env
+
+        cat > .env <<EOF
+        source venv/bin/activate
+
+        export DATABASE_URL="postgresql://YOUR_ROLE:PASSWORD@localhost:5432/DB_NAME"
+        export SECRET_KEY='YOUR SECRET KEY GOES HERE'
+        export FACEBOOK_KEY="FACEBOOK KEY HERE"
+        export FACEBOOK_SECRET="FACEBOOK SECRET HERE"
+        export GOOGLE_OAUTH2_KEY="GOOGLE OAUTH2 KEY HERE"
+        export GOOGLE_OAUTH2_SECRET="GOOGLE OAUTH2 SECRET HERE"
+        export OAUTH2_ACCESS_TOKEN="GOOGLE OAUTH2 ACCESS TOKEN HERE"
+        export EMAIL_SENDER="YOUR EMAIL ADDRESS"
+        export EMAIL_HOST="smtp.gmail.com"
+        export EMAIL_HOST_USER="YOUR EMAIL ADDRESS"
+        export EMAIL_HOST_PASSWORD="YOUR PASSWORD"
+        export EMAIL_PORT=587
+        export CLOUDINARY_NAME=“CLOUDINARY NAME”
+        export CLOUDINARY_KEY=“CLOUDINARY API KEY"
+        export CLOUDINARY_SECRET=“CLOUDINARY API SECRET KEY”
+        export APP_BASE_URL="http://127.0.0.1:8000"
+
+
+        EOF
+
+  - name: Create start script
+    shell: 
+      cmd: |
+        cd /home/ubuntu/ah-bird-box
+        touch startapp.sh
+
+        cat > startapp.sh <<EOF
+        #!/usr/bin/env bash
+        cd /home/ubuntu/ah-bird-box/
+        ls -al
+        
+        source .env
+
+        gunicorn authors.wsgi
+
+        EOF
+
+  - name: Create start service
+    shell: 
+      cmd: |
+        cd /etc/systemd/system/
+        touch ahbb.service
+        cat > ahbb.service <<EOF
+        
+        [Unit]
+        Description=AH Birdbox startup service
+        After=network.target
+        After=systemd-user-sessions.service
+        After=network-online.target
+
+        [Service]
+        Type=simple
+        User=ubuntu
+        WorkingDirectory=/home/ubuntu/ah-bird-box
+        ExecStart=/bin/bash /home/ubuntu/ah-bird-box/startapp.sh
+        Restart=always
+
+        [Install]
+        WantedBy=multi-user.target
+
+        EOF
+  
+  - name: Change the files permission
+    shell: 
+      cmd: |
+        sudo chmod 744 /home/ubuntu/ah-bird-box/startapp.sh
+        sudo chmod 664 /etc/systemd/system/ahbb.service
+        
+  - name: Start the service that keeps the app running
+    shell: 
+      cmd: |
+        sudo systemctl daemon-reload
+        sudo systemctl enable ahbb.service
+        sudo systemctl start ahbb.service
+  
+  handlers:
+    - name: restart nginx
+      service: 
+        name: nginx
+        state: restarted

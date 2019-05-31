@@ -1,0 +1,79 @@
+---
+
+- name: ah birdbox frontend
+  hosts: all
+  remote_user: ubuntu
+  become: yes
+  become_method: sudo
+  vars:
+    db_user: USER
+    db_name: DATABASE
+    db_password: PASSWORD
+    ansible_python_interpreter: "/usr/bin/python3"
+
+  tasks:
+
+  # INSTALL PACKAGES
+
+  - name: Installing python 3.7
+    apt:
+      name: python3.7
+      update_cache: yes
+      state: present
+  
+  - name: Installing python3-pip
+    apt:
+      name: python3-pip
+      state: present
+
+  - name: Ensure bash, OpenSSl, and libssl are the latest versions
+    apt: 
+      name: [bash, openssl, libssl-dev, libssl-doc]
+      update_cache: true 
+      state: latest
+  
+  - name: Install PostgreSQL
+    apt: 
+      name: [postgresql, postgresql-contrib, libpq-dev]
+      update_cache: true 
+      state: present
+    
+  - name: Install psycopg2
+    shell:
+      cmd: |
+        pip3 install psycopg2
+        
+  - name: Ensure the PostgreSQL service is running
+    service: 
+      name: postgresql 
+      state: started 
+      enabled: yes
+
+  - name: Ensure database is created
+    become_user: postgres
+    postgresql_db: 
+      name={{ db_name }}
+      encoding='UTF-8'
+      lc_collate='en_US.UTF-8'
+      lc_ctype='en_US.UTF-8'
+      template='template0'
+      state=present
+
+  - name: Ensure user has access to the database
+    sudo_user: postgres
+    postgresql_user: 
+      db={{ db_name }}
+      name={{ db_user }}
+      password={{ db_password }}
+      priv=ALL
+      state=present
+  
+  - name: Edit postgresql.conf file
+    shell: |
+        sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/gi" /etc/postgresql/10/main/postgresql.conf
+        systemctl restart postgresql
+  
+  - name: Edit pg_hba.conf file
+    shell: |
+        echo "host  all  all  172.16.2.0/24  trust" >> /etc/postgresql/10/main/pg_hba.conf
+        systemctl restart postgresql

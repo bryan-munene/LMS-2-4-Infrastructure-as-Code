@@ -1,0 +1,140 @@
+---
+
+- name: ah birdbox frontend
+  hosts: all
+  remote_user: ubuntu
+  become: yes
+  become_method: sudo
+  vars:
+    nodejs_version: "10"
+    ansible_dest_release: "trusty"
+    ansible_python_interpreter: "/usr/bin/python3"
+
+  tasks:
+
+  # INSTALL PACKAGES
+
+  - name: Install gpg key for node js
+    apt_key:
+      url: "https://deb.nodesource.com/gpgkey/nodesource.gpg.key"
+      state: present
+
+  - name: Add nodejs repo
+    apt_repository:
+      repo: "deb https://deb.nodesource.com/node_{{ nodejs_version }}.x {{ ansible_dest_release }} main"
+      state: present
+      update_cache: yes
+
+  - name: install nginx
+    apt:
+      name: nginx
+      state: latest
+
+  - name: install nodejs
+    apt:
+      name: nodejs
+      state: present
+
+  - name: Install PM2
+    npm:
+      name: pm2
+      state: latest
+      global: yes
+
+  - name: Change ownership of various directories
+    file: 
+      path: "{{ item }}"
+      owner: ubuntu
+      recurse: yes
+    with_items:
+      - /etc/nginx/sites-available
+      - ~/.config 
+      - ~/.npm
+
+  
+  # CLONE THE REPO AND CD TO IT
+
+  - name: clone the repo
+    git:
+      repo: 'https://github.com/andela/ah-bird-box-frontend.git'
+      dest: /home/ubuntu/ah-bird-box-frontend
+      clone: yes
+
+  # INSTALL DEPENDENCIES AND ADD ENV VARIABLES
+
+  - name: Change ownership of project directory
+    file: 
+      path: /home/ubuntu/ah-bird-box-frontend
+      owner: ubuntu
+      recurse: yes
+
+  - name: Install dependancies
+    shell:
+      cmd: |
+        cd /home/ubuntu/ah-bird-box-frontend
+        sudo npm install --no-optional
+        
+  - name: Change ownership of project directory
+    file: 
+      path: /home/ubuntu/ah-bird-box-frontend
+      owner: ubuntu
+      recurse: yes
+  
+  # CONFIGURE NGINX
+
+  - name: Remove NGINX default files
+    file: 
+      path: "{{ item }}"
+      state: absent
+    with_items:
+      - /etc/nginx/sites-enabled/default
+      - /etc/nginx/sites-available/default
+
+
+  - name: Check if custom file already exists and delete if found
+    file: 
+      path: /etc/nginx/sites-available/ansibleDemo
+      state: absent
+
+  - name: Add custom nginx configuration
+    shell:
+      cmd: |
+          cat > /etc/nginx/sites-available/ansibleDemo <<EOF
+          server {
+              listen 80;
+              server_name localhost;
+              location / {
+                proxy_pass http://127.0.0.1:3000;
+              }
+          }
+          EOF
+
+  - name: create symlinks for nginx configuration 
+    file:
+      src:  /etc/nginx/sites-available/ansibleDemo
+      dest: /etc/nginx/sites-enabled/ansibleDemo
+      state: link
+    notify:
+    - restart nginx
+
+  - name: Create enviroment variables script
+    shell: 
+      cmd: |
+        cd /home/ubuntu/ah-bird-box-frontend
+        touch .env
+        cat > .env <<EOF
+        
+          REACT_APP_API_URL="api_url_without_a_trailing_slash"
+          REACT_APP_API_KEY="firebaseapp_api_key"
+          REACT_APP_AUTH_DOMAIN="firebaseapp_app_url"
+          REACT_APP_IMGUR_CLIENT_ID="Client-ID imgur_key_value"
+          REACT_APP_IMGUR_URL="imgur_post_image_url"
+
+        EOF
+
+  
+  handlers:
+    - name: restart nginx
+      service: 
+        name: nginx
+        state: restarted

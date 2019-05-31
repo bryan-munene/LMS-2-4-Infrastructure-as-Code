@@ -1,0 +1,42 @@
+{
+  "variables": {
+  "aws_access_key": "${AWS_ACCESS_KEY_ID}",
+  "aws_secret_key": "${AWS_SECRET_ACCESS_KEY}",
+  "vpc_region": "${vpc_region}",
+  "instance_type": "${instance_type}",
+  "ssh_username": "${ssh_username}"
+},
+  "builders": [
+    {
+      "type": "amazon-ebs",
+      "access_key": "{{user `aws_access_key`}}",
+      "secret_key": "{{user `aws_secret_key`}}",
+      "region": "{{user `vpc_region`}}",
+      "source_ami_filter": {
+        "filters": {
+          "virtualization-type": "hvm",
+          "name": "ubuntu/images/*ubuntu-bionic-18.04-amd64-server-*",
+          "root-device-type": "ebs"
+        },
+        "owners": [
+          "099720109477"
+        ],
+        "most_recent": true
+      },
+      "instance_type": "{{user `instance_type`}}",
+      "ssh_username": "{{user `ssh_username`}}",
+      "ami_name": "ah-birdbox-db {{timestamp}}"
+    }
+  ],
+  "provisioners": [
+    {
+      "type": "shell",
+      "script": "../scripts/db/setup.sh"
+    },
+
+    {
+      "type": "ansible",
+      "playbook_file": "../scripts/db/baseConfig.yml"
+    }
+  ]
+}
